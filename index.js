@@ -46,7 +46,7 @@ app.post('/convert', cors(), upload.single('markdownFile'), async (req, res) => 
   async function convertImage (inputPath, outputPath) {
     try {
       // Construct the ImageMagick command
-      const command = `magick ${inputPath} -background white -alpha remove -alpha off ${outputPath}`;
+      const command = `convert ${inputPath} -background white -alpha remove -alpha off ${outputPath}`;
       // Run the command
       const result = await runCommand(command);
       console.log('Image converted successfully:', result);

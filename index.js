@@ -27,7 +27,7 @@ app.get('/', (req, res) => {
 app.post('/convert', cors(), upload.single('markdownFile'), async (req, res) => {
 
 
-  function runImageMagickCommand (command) {
+  function runCommand (command) {
     return new Promise((resolve, reject) => {
       exec(command, (error, stdout, stderr) => {
         if (error) {
@@ -46,14 +46,49 @@ app.post('/convert', cors(), upload.single('markdownFile'), async (req, res) => 
   async function convertImage (inputPath, outputPath) {
     try {
       // Construct the ImageMagick command
-      const command = `magick ${inputPath} ${outputPath}`;
+      const command = `magick ${inputPath} -background white -alpha remove -alpha off ${outputPath}`;
       // Run the command
-      const result = await runImageMagickCommand(command);
+      const result = await runCommand(command);
       console.log('Image converted successfully:', result);
     } catch (error) {
       console.error('Error converting image:', error);
     }
   }
+
+  async function convertDocxToHtml (inputPath) {
+    try {
+      // Construct the ImageMagick command
+      const command = `pandoc ${inputPath} --extract-media ./ --webtex -t html5 -o markdown.html`;
+      // Run the command
+      await runCommand(command);
+
+
+      // let responsive = fsData.toString();
+      const files = await fs.promises.readdir('./media');
+
+      const fsData = fs.readFileSync('markdown.html');
+
+      let responsive = fsData.toString();
+      const imageProcessingPromises = files?.map(async file => {
+        const imagePath = `./media/${file}`;
+        const outputPath = `./media-converted/${file.replace(/\.[^.]*$/, '.png')}`;
+        await convertImage(imagePath, outputPath);
+        const imageBuffer = fs.readFileSync(outputPath);
+
+        fs.unlinkSync(imagePath);
+        fs.unlinkSync(outputPath);
+        const base64Image = Buffer.from(imageBuffer).toString('base64');
+        responsive = responsive.split(`src="./media/${file}"`).join(`src="data:image/png;base64,${base64Image}"`);
+      });
+
+      await Promise.all(imageProcessingPromises);
+
+      return responsive;
+    } catch (error) {
+      console.error('Error converting docx:', error);
+    }
+  }
+
 
   const removeFileIfExists = (filePath) => {
     if (fs.existsSync(filePath)) {
@@ -63,6 +98,12 @@ app.post('/convert', cors(), upload.single('markdownFile'), async (req, res) => 
       console.log(`File ${filePath} does not exist.`);
     }
   };
+
+  const sendResult = (tempFilePath, responsive) => {
+    removeFileIfExists(tempFilePath)
+    removeFileIfExists('markdown.html')
+    res.send(responsive);
+  }
 
   try {
     if (!req.file) {
@@ -75,61 +116,12 @@ app.post('/convert', cors(), upload.single('markdownFile'), async (req, res) => 
     // Write buffer to a temporary file
     const tempFilePath = './' + filename;
     fs.writeFileSync(tempFilePath, buffer);
-
-    args = ['--extract-media', './', '-t', 'markdown-bracketed_spans-raw_html-native_spans', '-o', 'markdown.md'];
-
-    // Set your callback function
-    const callback = async function (err, result) {
-
-      console.log(tempFilePath)
-      // Delete the temporary file
-      const fsData = fs.readFileSync('markdown.md');
-
-      let responsive = fsData.toString();
-      const files = await fs.promises.readdir('./media');
-
-
-      try {
-
-        const imageProcessingPromises = files?.map(async file => {
-          const imagePath = `./media/${file}`;
-          const outputPath = `./media-converted/${file.replace(/\.[^.]*$/, '.png')}`;
-          await convertImage(imagePath, outputPath);
-          const imageBuffer = fs.readFileSync(outputPath);
-
-          fs.unlinkSync(imagePath);
-          fs.unlinkSync(outputPath);
-          const base64Image = Buffer.from(imageBuffer).toString('base64');
-
-          responsive = responsive.split(`![](./media/${file})`).join(`![](data:image/png;base64,${base64Image})`);
-        });
-
-        await Promise.all(imageProcessingPromises);
-      } catch (error) {
-        console.error('Error processing images:', error);
-        return res.status(500).send('Error converting Markdown to HTML');
-      }
-
-
-
-      if (err) {
-        console.error('Oh Nos: ', err);
-        return res.status(500).send('Error converting Markdown to HTML');
-      }
-      removeFileIfExists(tempFilePath)
-      removeFileIfExists('markdown.md')
-      return res.send(responsive);
-    };
-
-    // Convert temporary file to HTML using node-pandoc
-    nodePandoc(tempFilePath, args, callback);
-    // const filetest = fs.readFileSync('./output.md')
-
-    // console.log(filetest)
+    const docxHtml = await convertDocxToHtml(tempFilePath)
+    sendResult(tempFilePath, docxHtml.toString())
   } catch (error) {
-    console.error('Error converting Markdown to HTML:', error);
-    res.status(500).send('Error converting Markdown to HTML');
+
   }
+
 });
 // Start the server
 app.listen(port, () => {
